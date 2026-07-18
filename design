@@ -1,0 +1,853 @@
+AISurv
+Advanced AI Surveillance System
+Revised System Design and Architecture Document
+
+Design Status: Architecture and interface specification only
+Primary Operator Platform: JavaFX desktop control-centre application using AtlantaFX
+Target Deployments: Local-first sites with approximately 5 cameras through hybrid commercial/enterprise deployments with 100+ cameras
+Current Prototype Baseline: RTSP camera feeds, frame capture, motion detection, person detection, live display, and event logging
+Target Deployment Model: Local edge operation with an optional cloud control plane
+
+1. Product Vision
+
+AISurv is a commercial AI-powered CCTV surveillance platform for institutions such as schools, universities, offices, hospitals, estates, warehouses, and multi-building campuses.
+
+The main operator experience is a professional desktop control-centre application built with JavaFX and AtlantaFX. The platform receives RTSP camera feeds, processes selected frames, detects humans and security-relevant behavior, optionally applies governed identity analysis, preserves evidence, stores records, and sends approved alerts to authorised devices.
+
+AISurv must support three deployment requirements:
+
+1. Every monitored site can run camera ingestion, AI processing, operational persistence, evidence storage, and the desktop client locally without depending on an internet connection.
+2. Connected commercial deployments can use an optional cloud control plane for tenant and site management, licensing, fleet health, remote event summaries, notifications, software-update metadata, and approved analytics.
+3. Enterprise deployments can separate stream ingestion, AI processing, persistence, evidence storage, analytics, notifications, and clients into independently scalable responsibilities while preserving the local-first boundary.
+
+The cloud control plane augments site operation; it does not sit in the critical path for camera capture, detection, local alerts, incident handling, or evidence preservation.
+
+The system is not just a multi-camera viewer. It is an event-driven intelligent surveillance platform with a desktop command-centre interface.
+
+2. Core Architectural Pattern
+
+AISurv uses a Layered Event-Driven Pipeline Architecture.
+
+RTSP Camera Sources
+        |
+Camera Registry and Stream Sessions
+        |
+Stream Capture Layer
+        |
+Frame Queue and Frame Processing Layer
+        |
+Motion Detection / Activity Gate
+        |
+Object Detection and Zone-Aware Filtering
+        |
+Human Tracking and Movement Analysis
+        |
+Behavior Analysis and Optional Identity Analysis
+        |
+Event Rules and Severity Classification
+        |
+Event Dispatch Layer
+   _____|______________________________
+  |          |          |       |      |
+GUI      Database   Evidence  Alerts  Analytics/Audit
+Dashboard Records   Storage   Mobile  Reporting
+
+Core principle:
+
+The camera pipeline must not directly control the entire application. It produces structured surveillance events. Other modules react to those events according to permissions, policies, rules, and configuration.
+
+This keeps the UI responsive, reduces coupling, supports scaling, and allows future services or workers to be separated without redesigning the product.
+
+Deployment principle:
+
+Operational surveillance remains on the local edge. An edge synchronization gateway may send policy-approved records to the cloud through authenticated APIs. Cameras, local PostgreSQL, and local evidence storage are never exposed directly to the public internet, and the desktop client never embeds cloud database credentials.
+
+Service strategy:
+
+AISurv establishes three coarse deployment boundaries early: the JavaFX desktop client, the local edge backend, and the optional cloud control plane. The edge backend and cloud backend begin as separate modular monoliths with explicit module ownership and versioned APIs. They are not decomposed into many microservices by default. Capture, inference, notification, evidence, or analytics workers become independent services only when measured scaling, fault-isolation, hardware, deployment, or team-ownership requirements justify extraction.
+
+3. Revised Technology Stack
+
+Area                         Technology / Tool
+Desktop UI                   JavaFX 21
+UI Theme                     AtlantaFX
+Persistence                  Hibernate / Jakarta Persistence
+Local Operational Database   PostgreSQL
+Cloud Control Database       Managed PostgreSQL behind a backend API; Supabase, RDS, Cloud SQL, or equivalent
+Database Migration           Flyway
+Connection Pooling           HikariCP
+Shared Cache                 Redis
+Local In-Process Cache       Caffeine
+Dashboard Live Updates       Server-Sent Events (SSE)
+Local Backend / Service      Separate Spring Boot edge runtime introduced in M1
+Cloud Backend / API          Authenticated Java service, preferably Spring Boot
+Edge-Cloud Synchronization   HTTPS with TLS, durable outbox, idempotent APIs, and retry with backoff
+RTSP / Video Processing      JavaCV / FFmpeg, OpenCV, or GStreamer
+AI Inference                 ONNX Runtime Java
+Evidence Storage             Local filesystem or MinIO first; cloud object storage only for approved replication
+Messaging / Event Bus        Internal event dispatcher first; Redis Streams or RabbitMQ later if needed
+Security                     Spring Security, Apache Shiro, or a focused custom RBAC layer
+QR Codes                     ZXing
+Reports                      JasperReports or PDFBox
+Logging                      SLF4J + Logback
+Testing                      JUnit 5, Mockito, Testcontainers
+Dev Containers               Docker Compose
+Future Orchestration         Kubernetes
+Future K8s Packaging         Helm
+Observability                Micrometer, OpenTelemetry, Prometheus, Grafana, Loki
+Security Scanning            Trivy, OWASP Dependency-Check
+
+4. High-Level System Layout
+
+Local Site / Edge
+
+[JavaFX + AtlantaFX Desktop Client Process]
+        |
+Versioned local command/query API and SSE
+        |
+[Modular Edge Backend Process]
+Application Services / Event-Driven Surveillance Core
+        ^
+        |
+RTSP Cameras -> Capture Workers / AI Workers / Event Engine
+        |
+Local PostgreSQL / Redis / Filesystem or MinIO
+        |
+Durable Outbox and Edge Synchronization Gateway
+        |
+        | outbound authenticated HTTPS; store and forward
+        v
+Optional Cloud Control Plane
+
+Cloud API and Identity Boundary
+        |
+Tenant / Site / Fleet / Notification / Reporting Services
+        |
+Managed PostgreSQL / Approved Object Storage / Observability
+
+The desktop client and local edge backend become separate processes during M1, even when installed on the same workstation. The desktop calls a versioned local API and receives DTOs, view models, and live updates. It must not directly own database tables, Redis keys, AI inference, stream lifecycle, or evidence file management. The edge backend continues monitoring when the desktop closes or restarts. The current M0 prototype still contains direct desktop-process persistence and processing; this is implementation debt, not the target boundary.
+
+4.1 Local Edge Responsibilities
+
+- Discover and connect to cameras on the site network.
+- Capture RTSP streams and run motion, object, behavior, and optional identity analysis locally.
+- Persist camera configuration, events, incidents, audit records, settings, and evidence metadata in local PostgreSQL.
+- Preserve snapshots and clips in local filesystem or MinIO storage according to retention policy.
+- Authenticate local operators and enforce cached site permissions during cloud outages.
+- Continue monitoring, local alerting, incident review, and evidence capture without cloud connectivity.
+- Queue approved synchronization records in a durable transactional outbox.
+
+4.2 Optional Cloud Control Plane Responsibilities
+
+- Manage commercial tenants, sites, subscriptions, licensing, and device enrollment.
+- Provide fleet health, remote administration, notification routing, and cross-site reporting.
+- Store synchronized event summaries, health telemetry, audit summaries, and other policy-approved records.
+- Distribute signed configuration and software-update metadata through controlled APIs.
+- Enforce tenant isolation, cloud roles, data residency, retention, and regional deployment requirements.
+
+The cloud control plane must not require direct access to camera networks, RTSP credentials, local PostgreSQL, or local object-storage credentials. Cloud PostgreSQL is reachable only by cloud backend services. Supabase may be selected as a managed PostgreSQL and platform provider, but edge and desktop clients still communicate through AISurv APIs rather than database or service-role credentials.
+
+4.3 Connectivity and Synchronization Rules
+
+- Edge-to-cloud connections are outbound only by default and use TLS with authenticated site identities.
+- Local operation must tolerate an unavailable cloud control plane for an administrator-defined period.
+- Synchronization is asynchronous, resumable, observable, and safe to retry.
+- Every synchronized command or record has a stable identifier and idempotency behavior.
+- A transactional outbox prevents committed local records from being lost between database commit and transmission.
+- Cloud-issued commands are signed or authenticated, authorized for one tenant and site, audited, and acknowledged.
+- Camera credentials, raw streams, biometric templates, and evidence remain local by default.
+- Evidence or personal data is uploaded only when enabled by explicit policy, legal basis, role, and retention configuration.
+- Conflict ownership is explicit: the edge owns live operational state; the cloud owns tenant, subscription, and fleet-level state; synchronized policy versions use versioned reconciliation.
+
+4.4 Service Extraction Rules
+
+- The JavaFX client, edge backend, and cloud control plane are independent deployment units with versioned contracts.
+- The edge backend is a modular monolith first; camera, event, evidence, identity, notification, and synchronization modules have explicit internal boundaries.
+- The cloud control plane is a separate modular monolith first and owns no site camera-processing responsibilities.
+- A module is extracted only when it needs independent scaling, failure isolation, hardware placement, release cadence, or team ownership.
+- RTSP capture and AI inference stay in the same edge process or local worker pool until measured GPU or camera-load requirements justify separation.
+- Full video frames are not transported between network services by default; extraction requires a documented bandwidth, latency, ownership, and backpressure design.
+- Extracted services own their persistence and contracts. Cross-service table access and a shared mutable database schema are prohibited.
+- Distributed messaging is introduced for a demonstrated delivery need, not merely to label the architecture as microservices.
+
+5. Separation of Concerns
+
+5.1 Desktop UI Layer
+
+Responsibilities:
+
+- JavaFX application shell
+- AtlantaFX theme and styling
+- Dashboard page
+- Live Monitor page
+- Event Log page
+- Incident Review page
+- Camera and Zone Management pages
+- AI Settings page
+- Notification Settings page
+- Face Registry page
+- Reports and Analytics page
+- Audit Log page
+- Users and Roles page
+- System Health page
+
+Rules:
+
+- UI updates happen on the JavaFX Application Thread.
+- Database, stream, AI, network, and evidence work run in the separate edge backend or its workers.
+- The UI should not directly access Hibernate repositories, Redis, RTSP connections, or raw evidence storage.
+- The UI uses versioned command/query APIs and SSE subscriptions through generated or shared contract DTOs.
+
+5.2 Application Service Layer
+
+The application service layer runs inside the local edge backend as a modular monolith. It is the only desktop-facing boundary for local operational commands and queries.
+
+Responsibilities:
+
+- Coordinate business use cases.
+- Validate commands.
+- Check permissions.
+- Call domain services and repositories.
+- Return DTOs and view models to the UI.
+- Hide persistence and infrastructure details from the desktop client.
+
+Representative services:
+
+- CameraApplicationService
+- EventApplicationService
+- IncidentReviewService
+- DashboardService
+- EvidenceApplicationService
+- NotificationApplicationService
+- UserRoleService
+- SystemHealthService
+
+5.3 Camera and Stream Layer
+
+Responsibilities:
+
+- ONVIF camera discovery
+- Manual RTSP camera registration fallback
+- Operator-approved camera registration
+- Camera registration metadata
+- RTSP connection lifecycle
+- Stream health checks
+- Reconnect policy
+- Frozen-stream detection
+- Frame capture
+- Camera priority handling
+
+CameraStreamWorker remains a stream ingestion worker. It captures frames and reports stream health. It must not own final AI decisions, event severity, database writes, or notification routing.
+
+Commercial camera lifecycle:
+
+Discover cameras
+        |
+Present discovered devices to authorised operator
+        |
+Operator enters or validates credentials
+        |
+Resolve or validate RTSP stream URI
+        |
+Operator assigns name, location, zone, priority, and enabled state
+        |
+Save registered camera to PostgreSQL
+        |
+StreamManager starts monitoring enabled cameras
+        |
+Health monitor updates live status and emits camera events
+
+Discovery rules:
+
+- ONVIF discovery is the preferred automatic discovery method.
+- Discovered cameras are temporary candidates, not trusted production cameras.
+- Operators must explicitly register discovered cameras before monitoring begins.
+- Manual RTSP registration must remain supported because some cameras or NVRs have incomplete ONVIF support.
+- Credentials must not be displayed casually or stored as plain text in the final commercial implementation.
+- Camera registration, updates, disablement, and deletion must be audited.
+
+Camera registration data should include:
+
+- Display name
+- RTSP URL
+- ONVIF service URL where available
+- Manufacturer and model where available
+- Host/IP address
+- Location, building, floor, and zone
+- Priority
+- Enabled state
+- Credential reference
+- Health status
+- Created and updated timestamps
+
+5.4 Frame Processing Layer
+
+Responsibilities:
+
+- Frame packaging and timestamping
+- Frame queueing
+- Resizing and preprocessing
+- Frame skipping and controlled inference intervals
+- Priority scheduling
+- Snapshot candidate extraction
+
+This layer protects CPU/GPU resources and ensures high-priority cameras are processed first under load.
+
+5.5 AI Detection Layer
+
+Responsibilities:
+
+- Motion/activity gating
+- Person detection
+- Object detection
+- Vehicle, animal, and other-object classification
+- Confidence scoring
+- Zone-aware filtering
+
+MotionDetector remains strategically important as the inexpensive first activity gate. Expensive inference should only run when activity, zone policy, camera priority, and resources justify it.
+
+5.6 Tracking Layer
+
+Responsibilities:
+
+- Assign temporary human track IDs.
+- Track people across frames.
+- Detect movement state.
+- Reduce duplicate alerts.
+- Mark zone entry and exit.
+- Optionally support cross-camera correlation in enterprise deployments.
+
+Movement states include stationary, walking, running, group movement, and unknown.
+
+5.7 Behavior Analysis Layer
+
+Responsibilities:
+
+- Loitering detection
+- Restricted-zone entry detection
+- After-hours movement detection
+- Multiple-people-running detection
+- Fight or commotion detection
+- Fall or accident detection
+- Crowd activity analysis
+
+Behavior decisions should use multi-frame confirmation, zone rules, confidence thresholds, and context to reduce false positives.
+
+5.8 Optional Face Intelligence Layer
+
+Face detection and recognition are optional and tightly governed.
+
+Rules:
+
+- Disabled unless explicitly enabled by authorised administrators.
+- Limited to approved zones and approved institutional use cases.
+- Controlled by roles and permissions.
+- Audited for all sensitive administrative and access actions.
+- Results must be cautious: known match, unknown, watchlist candidate, insufficient confidence, not visible, not required, or not authorised.
+
+Face recognition must not be treated as an unquestionable identity decision.
+
+5.9 Event Engine
+
+The Event Engine converts observations into structured surveillance events.
+
+It decides:
+
+- Event type
+- Severity
+- Evidence requirements
+- Notification requirements
+- Cooldown and duplicate suppression
+- Escalation rules
+- Operator acknowledgement requirements
+
+Severity levels:
+
+- Low: ordinary informational events or normal movement
+- Medium: loitering warnings or impaired camera state
+- High: restricted-zone entry, after-hours human movement, unexpected group running
+- Critical: fight, major commotion, suspected fall, accident, or emergency condition
+
+5.10 Persistence Layer
+
+Local PostgreSQL is the source of truth for site operational records. Cloud PostgreSQL is a separate source of truth for tenant, subscription, fleet, and synchronized cloud records. Neither database is accessed directly across the edge-cloud boundary. Hibernate/JPA is used through repositories, Flyway manages schema migrations, and HikariCP manages connection pooling.
+
+Stored data includes:
+
+- Users, roles, and permissions
+- Cameras, groups, zones, and priorities
+- Events and incident records
+- Evidence metadata
+- Notification records and device endpoints
+- System settings
+- AI model settings and thresholds
+- Audit logs
+- Retention policies
+
+Large media files should not be stored directly in relational tables. PostgreSQL stores metadata and references. Evidence storage stores actual snapshots and clips.
+
+5.11 Redis and Local Caching
+
+Redis is used for shared fast-changing state and short-lived data.
+
+Good Redis uses:
+
+- Dashboard summary cache
+- Recent events cache
+- Camera online/offline state
+- Active incident state
+- Notification cooldowns
+- Duplicate event suppression
+- Temporary QR pairing tokens
+- SSE fan-out support
+- Future lightweight event streaming through Redis Streams if needed
+
+Redis is not the source of truth. Critical records still persist to PostgreSQL.
+
+Caffeine is used as a local in-process cache for frequently read data such as camera metadata, zone policies, user permissions, system settings, and AI thresholds.
+
+5.12 Evidence Management Layer
+
+Responsibilities:
+
+- Capture snapshots for high-value events.
+- Preserve short incident clips where configured.
+- Link evidence to event records.
+- Enforce retention policies.
+- Protect evidence integrity.
+- Control access and export permissions.
+- Audit sensitive evidence access.
+
+Storage strategy:
+
+- Local filesystem for prototype and small deployments.
+- Local MinIO or another S3-compatible store for durable commercial edge deployments.
+- Optional cloud object storage for explicitly approved replication, remote incident workflows, or archival.
+- Evidence stays local by default and is never copied to the cloud merely because cloud connectivity is enabled.
+
+5.13 Notification Layer
+
+Responsibilities:
+
+- Mobile alert routing
+- Secure QR device pairing
+- Device enrollment and revocation
+- Notification rules and subscriptions
+- Escalation for unacknowledged critical events
+- Notification history and delivery status
+
+Rules:
+
+- QR pairing codes must expire.
+- Scanning a QR code alone must not grant permanent access.
+- Devices must be linked to authenticated users or approved roles.
+- Notification payloads must respect role permissions and avoid unnecessary sensitive data.
+
+5.14 Dashboard Analytics Layer
+
+Responsibilities:
+
+- Live event counts
+- Camera status summaries
+- Active incident counts
+- Severity distribution
+- Recent event feed
+- Processing load
+- Notification status
+- System health summary
+
+SSE is used for server-to-client live updates such as metrics, counts, status changes, and event notifications.
+
+SSE must not be used for RTSP video, high-frequency frame transport, or bidirectional operator commands. Operator actions should use command APIs or application services.
+
+5.15 Security, Privacy, and Governance Layer
+
+Responsibilities:
+
+- Authentication
+- Roles and permissions
+- Session control
+- Access restrictions for live feeds, events, evidence, settings, and face data
+- Privacy and retention governance
+- Administrative control of notification endpoints
+- Sensitive action auditing
+
+Security-sensitive actions must be audited, including evidence access, evidence export, biometric profile changes, camera configuration changes, AI threshold changes, device enrollment, device revocation, role updates, and incident acknowledgement or escalation.
+
+5.16 Observability Layer
+
+Responsibilities:
+
+- Application logs
+- Metrics
+- Traces
+- Health checks
+- System performance dashboards
+
+Important metrics:
+
+- Camera uptime
+- Frame processing rate
+- AI inference latency
+- Queue depth
+- Dropped frames
+- Database latency
+- Redis latency
+- SSE client count
+- Notification failures
+- Evidence storage usage
+- CPU, GPU, and memory load
+
+6. Recommended Project Structure
+
+AISurv/
+├── pom.xml
+├── README.md
+├── docker-compose.yml
+├── models/
+│   ├── yolov8n.onnx
+│   └── model-registry/
+├── resources/
+│   ├── icons/
+│   ├── themes/
+│   ├── branding/
+│   └── report-templates/
+├── data/
+│   ├── snapshots/
+│   ├── incident-clips/
+│   ├── exports/
+│   └── archives/
+└── src/main/java/org/example/aisurv/
+    ├── Main.java
+    ├── app/
+    ├── config/
+    ├── gui/
+    ├── camera/
+    ├── stream/
+    ├── frame/
+    ├── pipeline/
+    ├── detection/
+    ├── tracking/
+    ├── behavior/
+    ├── face/
+    ├── event/
+    ├── evidence/
+    ├── notification/
+    ├── analytics/
+    ├── persistence/
+    ├── security/
+    ├── audit/
+    ├── cache/
+    ├── modelmanagement/
+    ├── observability/
+    ├── deployment/
+    └── common/
+
+Retained existing classes and revised roles:
+
+Existing Class          Revised Role
+Main.java               Application entry point only.
+CameraMonitor.java      JavaFX live-monitoring view/controller candidate after migration from Swing.
+CameraStreamWorker.java Stream ingestion worker for RTSP capture and health reporting.
+MotionDetector.java     Activity gate before expensive inference.
+PersonDetector.java     Human detection strategy feeding tracking and behavior analysis.
+
+7. Data Ownership Rules
+
+Data Type                   Authority                         Cloud Handling
+Camera credentials          Local secret store                Never synchronized as plaintext
+Camera configuration        Local PostgreSQL                  Optional redacted inventory and approved policy sync
+Camera live status          Edge Redis plus local event log   Health summary may be synchronized
+Events and incidents        Local PostgreSQL                  Policy-approved summaries or records may be synchronized
+Evidence metadata           Local PostgreSQL                  Optional approved metadata replication
+Evidence files              Local filesystem/MinIO            Local by default; explicit approved upload only
+Local users and permissions Local PostgreSQL                  Site identity mapping may be synchronized
+Tenant and subscriptions    Cloud PostgreSQL                  Cloud authoritative; cached entitlement at edge
+Fleet configuration         Cloud PostgreSQL                  Versioned policy distributed to enrolled sites
+QR pairing codes            Scope-local Redis                 Short-lived only; never a durable source of truth
+Notification history        Originating PostgreSQL            Delivery state reconciled through APIs
+Audit logs                  Originating PostgreSQL            Approved summaries may be replicated append-only
+AI model settings           Local PostgreSQL                  Signed cloud policy may provide versioned updates
+
+Redis is never the source of truth for critical records. Managed cloud PostgreSQL, including Supabase when selected, is an infrastructure choice behind the cloud API and does not replace local operational PostgreSQL.
+
+8. Deployment Strategy
+
+8.1 Local Edge Deployment
+
+Every production site receives an edge deployment sized for its camera count and retention policy. It contains the local application service, PostgreSQL, optional Redis, local evidence storage, AI runtime, and synchronization gateway. A small site may place these responsibilities on one secured workstation or appliance. Larger sites may separate database, storage, capture, and GPU workers across local servers.
+
+The installed JavaFX client and edge backend are separate processes from M1 onward, even when colocated. Closing or updating the desktop must not stop camera monitoring. The edge API binds to loopback by default for single-workstation installations; LAN exposure requires TLS, service authentication, explicit interface configuration, and firewall policy.
+
+The edge must support local backup and restore, encrypted secrets, storage monitoring, health checks, offline operation, controlled upgrades, and disaster-recovery procedures. Production PostgreSQL and evidence storage must not use the development credentials in Docker Compose.
+
+8.2 Optional Cloud Deployment
+
+The cloud control plane is a separately deployed multi-tenant system. It contains authenticated APIs, tenant and site management, licensing, fleet health, notification routing, reporting, managed PostgreSQL, and approved cloud object storage. Supabase is an acceptable early managed platform option if tenant isolation, regional availability, backups, observability, and security requirements are met. The architecture remains portable to RDS, Cloud SQL, Azure Database for PostgreSQL, or self-managed PostgreSQL.
+
+No desktop or edge binary contains a cloud database password or Supabase service-role key. Cloud data access occurs only through backend services. Row-level security may provide defense in depth but does not replace the API authorization boundary.
+
+8.3 Docker for Development and Controlled Edge Packaging
+
+Docker should be used from the beginning for repeatable development and service setup.
+
+Docker Compose should run:
+
+- Local PostgreSQL
+- Redis
+- MinIO for S3-compatible evidence storage testing
+- Local edge backend/API service
+- Edge synchronization gateway or a cloud API simulator
+- Optional analytics service
+- Optional mock camera or mock event generator
+
+The JavaFX desktop client should normally be packaged as an installed desktop application, not run as a production container.
+
+Desktop packaging options:
+
+- jpackage
+- Conveyor
+- MSI/EXE installer for Windows
+- DMG/PKG for macOS if required
+- DEB/RPM/AppImage for Linux if required
+
+8.4 Kubernetes Later
+
+Kubernetes should be designed for but not implemented in the first build. It becomes relevant for the cloud control plane and large enterprise edge clusters once service boundaries and commercial deployment needs are stable.
+
+Future Kubernetes responsibilities:
+
+- Backend API services
+- Stream ingestion workers
+- AI processing workers
+- Notification service
+- Analytics service
+- Event dispatch service
+- Redis
+- PostgreSQL if self-hosted
+- MinIO or external S3-compatible evidence storage
+- Observability stack
+
+Future Kubernetes tools:
+
+- Helm
+- NGINX Ingress or Traefik
+- cert-manager
+- External Secrets Operator or Vault
+- Prometheus Operator
+- Grafana
+- Loki
+- Velero
+- NVIDIA Device Plugin for GPU workers
+- HPA or KEDA for autoscaling
+
+9. Scaling Strategy
+
+Small Institution Mode:
+
+- Approximately 5 to 10 cameras.
+- Desktop client, core services, PostgreSQL, Redis, evidence storage, and optional synchronization gateway may run in a compact local or single-server setup.
+- Docker Compose is sufficient for development and controlled deployments.
+- Cloud enrollment is optional; loss of cloud connectivity does not stop surveillance.
+
+Medium Institution Mode:
+
+- Approximately 10 to 50 cameras.
+- Separate heavier stream and AI processing responsibilities from the desktop UI.
+- Use queues, worker pools, Redis caching, Postgres persistence, and controlled evidence storage.
+
+Enterprise Institution Mode:
+
+- Approximately 50 to 100+ cameras.
+- Distributed local stream capture, AI worker pools, event dispatch, site persistence, object storage, analytics, notification services, and installed desktop clients.
+- Optional cloud control plane provides multi-site fleet management, licensing, notifications, and approved aggregate reporting.
+- Kubernetes becomes appropriate after the system has stable service boundaries.
+
+Camera priorities under load:
+
+- Critical cameras preserve strongest monitoring and alert capability.
+- High-priority cameras maintain active monitoring with limited reduction if necessary.
+- Normal cameras reduce processing frequency before critical zones.
+- Low-priority cameras may use reduced monitoring or delayed analytics under resource pressure.
+
+10. Main Engineering Challenges and Responses
+
+CPU/GPU Load:
+
+- Use motion gating.
+- Use frame skipping and controlled inference intervals.
+- Prioritise critical cameras.
+- Use worker pools and queues.
+- Run expensive AI only where rules justify it.
+
+RTSP Instability:
+
+- Use stream-health watchdogs.
+- Apply controlled reconnect policies.
+- Emit camera offline/impaired events.
+- Track uptime and downtime.
+
+False Positives:
+
+- Use multi-frame confirmation.
+- Apply zone-aware rules.
+- Tune confidence thresholds.
+- Use severity classification.
+- Preserve evidence for human review.
+
+Face Recognition Risk:
+
+- Keep identity analysis optional.
+- Limit it by zone and policy.
+- Control access by role.
+- Audit all sensitive actions.
+- Report confidence and uncertainty clearly.
+
+Evidence Growth:
+
+- Capture evidence only when rules require it.
+- Use retention policies.
+- Store large media outside the relational database.
+- Archive or delete according to policy.
+
+Database Growth:
+
+- Index by time, camera, zone, event type, severity, and acknowledgement state.
+- Separate large media from structured records.
+- Add archival policies.
+- Use dashboard caches and materialized summaries where needed.
+
+Alert Fatigue:
+
+- Default mobile notifications to high and critical events.
+- Use cooldowns and duplicate suppression.
+- Group repeated alerts.
+- Route alerts by role and zone.
+
+JavaFX Performance:
+
+- Keep AI and database work off the JavaFX Application Thread.
+- Use selected high-resolution feeds and reduced-rate thumbnails.
+- Paginate or group camera tiles.
+- Prioritise event-driven camera focus.
+
+Commercial Deployment Complexity:
+
+- Use Docker Compose first.
+- Keep services stateless where possible.
+- Externalise configuration.
+- Add health checks.
+- Delay Kubernetes until service boundaries are stable.
+
+Cloud Outages and Synchronization:
+
+- Keep cloud services outside the critical camera and local-alert path.
+- Use a durable transactional outbox and idempotent cloud APIs.
+- Bound local queue growth with policy-aware retention and operator warnings.
+- Reconcile versioned cloud policies without overwriting newer local operational state.
+- Expose synchronization lag, failures, and last-success time in system health.
+
+Data Residency and Tenant Isolation:
+
+- Keep raw streams, camera secrets, biometric templates, and evidence local by default.
+- Synchronize only data permitted by tenant policy and applicable law.
+- Partition and authorize every cloud record by tenant and site.
+- Support regional storage, retention, export, and deletion requirements.
+
+11. Implementation Phases
+
+Phase 1: Core Architecture Baseline
+
+- JavaFX + AtlantaFX application shell
+- Navigation and main page layout
+- Hibernate/PostgreSQL integration
+- Flyway migrations
+- Redis integration
+- Docker Compose for Postgres, Redis, and MinIO
+- Basic event model
+- Basic dashboard SSE
+- Logging baseline
+- Initial Camera Management page for ONVIF discovery and operator-approved RTSP registration
+- Introduce the separate local edge backend runtime and versioned desktop API
+- Move persistence, stream lifecycle, and AI ownership out of the JavaFX process
+- Keep the edge backend modular and prevent direct desktop or edge access to cloud databases
+
+Phase 2: Surveillance Pipeline
+
+- RTSP stream capture
+- Frame packet model
+- Motion/activity gate
+- Person/object detection integration
+- Frame queues
+- Processing intervals
+- Camera health events
+- Basic event dispatch
+
+Phase 3: Operational Features
+
+- Event log
+- Incident review
+- Evidence snapshots
+- Notification settings
+- QR pairing
+- User roles
+- Audit logging
+- System health page
+
+Phase 4: Advanced Intelligence
+
+- Human tracking
+- Behavior analysis
+- Loitering, running, fight, fall, and restricted-zone rules
+- Zone-aware policies
+- Face intelligence if approved
+- Model management
+- Threshold calibration
+
+Phase 5: Commercial Hardening
+
+- Desktop installer packaging
+- Backup and restore
+- Observability dashboards
+- Security scanning
+- Load testing
+- Testcontainers integration tests
+- Evidence retention jobs
+- Deployment documentation
+- Secured local edge packaging and offline-operation validation
+- Durable edge outbox and cloud synchronization contract
+- Tenant, site, and device enrollment model
+
+Phase 6: Enterprise and Kubernetes
+
+- Extract only processing responsibilities that have demonstrated independent scaling or isolation needs
+- Add Redis Streams, RabbitMQ, or another broker if needed
+- Add Helm charts
+- Add Kubernetes health probes
+- Add horizontal scaling
+- Add GPU worker support
+- Add centralized logs and metrics
+- Add enterprise backup and recovery
+- Deploy the optional multi-tenant cloud control plane
+- Add fleet health, licensing, remote summaries, and policy distribution
+- Validate tenant isolation, regional data residency, and disconnected-site recovery
+
+12. Design Philosophy
+
+AISurv is governed by these principles:
+
+- Capture only what is needed.
+- Process only what matters.
+- Alert only when it is important.
+- Store only useful and policy-approved evidence.
+- Display only actionable operational information.
+- Protect sensitive capabilities through permissions, auditing, and privacy controls.
+- Scale without changing the product purpose.
+
+Conclusion
+
+AISurv is designed as a professional JavaFX desktop-operated intelligent surveillance platform. The revised architecture preserves the existing RTSP capture, motion detection, person detection, live monitoring, and event logging baseline while moving the system toward a scalable commercial design.
+
+The target deployment is local-first and cloud-enabled. Camera ingestion, AI inference, operational PostgreSQL, and evidence remain at each site, while an optional cloud control plane provides tenant management, licensing, fleet health, remote summaries, notifications, and approved analytics through secure APIs. Supabase or another managed PostgreSQL platform may host cloud data, but it is never accessed directly by the desktop or edge runtime.
+
+The system should first focus on strong core architecture, clean separation of concerns, reliable offline operation, and a reliable event-driven pipeline. Cloud synchronization follows explicit data-ownership and privacy rules. Kubernetes should remain a planned cloud and enterprise deployment target, not a first-phase implementation burden.
