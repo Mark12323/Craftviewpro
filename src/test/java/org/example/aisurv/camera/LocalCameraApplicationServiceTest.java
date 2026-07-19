@@ -93,6 +93,17 @@ class LocalCameraApplicationServiceTest {
         verify(repository).save(any(CameraEntity.class));
     }
 
+    @Test
+    void rejectsCredentialReferencesUntilSecureStorageIsAvailable() {
+        CameraRepository repository = mock(CameraRepository.class);
+        LocalCameraApplicationService service = service(repository, mock(CameraDiscoveryService.class));
+        CameraRegistrationRequest authenticated = new CameraRegistrationRequest(
+                "Entrance", "rtsp://camera/live", null, null, null, "camera.local",
+                null, null, null, null, CameraPriority.NORMAL, true, "secret:camera-1");
+
+        assertThrows(IllegalArgumentException.class, () -> service.register(authenticated));
+    }
+
     private static LocalCameraApplicationService service(CameraRepository repository,
                                                          CameraDiscoveryService discovery) {
         return new LocalCameraApplicationService(() -> repository, discovery);

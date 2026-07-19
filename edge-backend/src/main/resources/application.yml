@@ -1,0 +1,15 @@
+server:
+  address: ${AISURV_EDGE_BIND_ADDRESS:127.0.0.1}
+  port: ${AISURV_EDGE_PORT:8080}
+  shutdown: graceful
+
+spring:
+  application:
+    name: aisurv-edge
+  lifecycle:
+    timeout-per-shutdown-phase: 8s
+
+aisurv:
+  edge:
+    version: 1.0-SNAPSHOT
+    database-probe-delay-ms: 10000

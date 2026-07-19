@@ -389,7 +389,11 @@
     -fx-text-fill: #92400e;
 }
 
-.status-chip.stopped {
+.status-chip.stopped,
+.status-chip.offline,
+.status-chip.frozen,
+.status-chip.disabled,
+.status-chip.unknown {
     -fx-background-color: #fee2e2;
     -fx-text-fill: #991b1b;
 }

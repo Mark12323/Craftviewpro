@@ -34,6 +34,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.HashSet;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -41,15 +42,13 @@ import java.awt.image.BufferedImage;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
-import org.example.aisurv.event.CameraHealthEvent;
-import org.example.aisurv.event.EventSeverity;
-import org.example.aisurv.event.SurveillanceEvent;
 import org.example.aisurv.app.BackgroundTaskTracker;
-import org.example.aisurv.camera.CameraApplicationService;
+import org.example.aisurv.edgeclient.EdgeApiClient;
+import org.example.aisurv.edgeclient.EdgeConnectionSnapshot;
+import org.example.aisurv.contract.v1.CameraSummaryV1;
 import org.example.aisurv.gui.CameraManagementPage;
-import org.example.aisurv.stream.StreamMonitorSurface;
 
-public final class DashboardView extends BorderPane implements StreamMonitorSurface {
+public final class DashboardView extends BorderPane {
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm:ss")
             .withZone(ZoneId.systemDefault());
     private final ObservableList<EventItem> events = FXCollections.observableArrayList();
@@ -60,7 +59,8 @@ public final class DashboardView extends BorderPane implements StreamMonitorSurf
     private final Map<String, String> cameraHealth = new HashMap<>();
     private final FrameCoalescer frameCoalescer = new FrameCoalescer(Platform::runLater, this::displayFrame);
     private final BackgroundTaskTracker backgroundTasks;
-    private final CameraApplicationService cameraService;
+    private final EdgeApiClient edgeApiClient;
+    private String edgeConnection = "Connecting";
     private String focusedCameraName;
     private ImageView focusedCameraView;
     private volatile boolean disposed;
@@ -69,15 +69,17 @@ public final class DashboardView extends BorderPane implements StreamMonitorSurf
     private final Button menuButton = new Button();
     private final Label currentPage = new Label();
     private final Label applicationStatus = new Label("Initializing services");
+    private final Label edgeConnectionStatus = new Label("Edge: connecting");
     private final Circle applicationStatusIndicator = new Circle(3);
     private final StackPane contentHost = new StackPane();
     private final Map<Page, Button> navigationButtons = new EnumMap<>(Page.class);
     private boolean navigationOpen;
+    private Page activePage;
 
     public DashboardView(String[] cameraNames, BackgroundTaskTracker backgroundTasks,
-                         CameraApplicationService cameraService) {
+                         EdgeApiClient edgeApiClient) {
         this.backgroundTasks = Objects.requireNonNull(backgroundTasks, "backgroundTasks");
-        this.cameraService = Objects.requireNonNull(cameraService, "cameraService");
+        this.edgeApiClient = Objects.requireNonNull(edgeApiClient, "edgeApiClient");
         for (String cameraName : cameraNames) {
             cameras.add(runtimeCamera(cameraName));
             cameraHealth.put(cameraName, "Waiting");
@@ -95,14 +97,48 @@ public final class DashboardView extends BorderPane implements StreamMonitorSurf
     }
 
     public void setConfiguredCameras(String[] cameraNames) {
+        applyConfiguredCameras(cameraNames, true);
+    }
+
+    public void updateConfiguredCameras(String[] cameraNames) {
+        applyConfiguredCameras(cameraNames, false);
+    }
+
+    public void updateConfiguredCameras(List<CameraSummaryV1> configuredCameras) {
         runOnFxThread(() -> {
+            String[] names = configuredCameras.stream().map(CameraSummaryV1::displayName).toArray(String[]::new);
+            var configuredNames = new HashSet<>(List.of(names));
             cameras.clear();
-            cameraHealth.clear();
+            cameraHealth.keySet().retainAll(configuredNames);
+            latestFrames.keySet().retainAll(configuredNames);
+            for (CameraSummaryV1 camera : configuredCameras) {
+                String health = camera.runtimeHealth() == null
+                        ? "Unknown" : displayName(camera.runtimeHealth().state().name());
+                cameras.add(new CameraItem(camera.displayName(),
+                        camera.location() == null ? "Location unavailable" : camera.location(),
+                        camera.zone() == null ? "Zone unavailable" : camera.zone(), health));
+                cameraHealth.put(camera.displayName(), health);
+                if ("Offline".equals(health) || "Frozen".equals(health)
+                        || "Stopped".equals(health) || "Disabled".equals(health)) {
+                    latestFrames.remove(camera.displayName());
+                }
+            }
+            if (activePage == Page.DASHBOARD || activePage == Page.LIVE_MONITOR) showPage(activePage);
+        });
+    }
+
+    private void applyConfiguredCameras(String[] cameraNames, boolean showDashboard) {
+        runOnFxThread(() -> {
+            var configuredNames = new HashSet<>(java.util.List.of(cameraNames));
+            cameras.clear();
+            cameraHealth.keySet().retainAll(configuredNames);
+            latestFrames.keySet().retainAll(configuredNames);
             for (String cameraName : cameraNames) {
                 cameras.add(runtimeCamera(cameraName));
-                cameraHealth.put(cameraName, "Waiting");
+                cameraHealth.putIfAbsent(cameraName, "Waiting");
             }
-            showPage(Page.DASHBOARD);
+            if (showDashboard) showPage(Page.DASHBOARD);
+            else if (activePage == Page.DASHBOARD || activePage == Page.LIVE_MONITOR) showPage(activePage);
         });
     }
 
@@ -114,7 +150,14 @@ public final class DashboardView extends BorderPane implements StreamMonitorSurf
         });
     }
 
-    @Override
+    public void setEdgeConnection(EdgeConnectionSnapshot snapshot) {
+        runOnFxThread(() -> {
+            edgeConnection = snapshot.message();
+            edgeConnectionStatus.setText("Edge: " + snapshot.state().name().toLowerCase());
+            edgeConnectionStatus.setAccessibleText(snapshot.message());
+        });
+    }
+
     public void updateFrame(String cameraName, BufferedImage frame) {
         frameCoalescer.submit(cameraName, frame);
     }
@@ -127,34 +170,6 @@ public final class DashboardView extends BorderPane implements StreamMonitorSurf
         if (cameraName.equals(focusedCameraName) && focusedCameraView != null) {
             focusedCameraView.setImage(image);
         }
-    }
-
-    @Override
-    public void onSurveillanceEvent(SurveillanceEvent event) {
-        runOnFxThread(() -> {
-            events.add(0, new EventItem(displayName(event.eventType().name()), displayName(event.severity().name()),
-                    TIME_FORMAT.format(event.occurredAt()), event.cameraName(), event.message()));
-            if (events.size() > 300) events.remove(300, events.size());
-        });
-    }
-
-    @Override
-    public void onCameraHealthEvent(CameraHealthEvent event) {
-        runOnFxThread(() -> {
-            String health = displayName(event.state().name());
-            cameraHealth.put(event.cameraName(), health);
-            Label label = cameraStatusLabels.get(event.cameraName());
-            if (label != null) {
-                label.setText(health.toUpperCase());
-                label.getStyleClass().removeAll("waiting", "online", "impaired", "reconnecting", "connecting", "stopped");
-                label.getStyleClass().add(event.state().name().toLowerCase());
-            }
-        });
-    }
-
-    @Override
-    public void logEvent(String cameraName, String message) {
-        setApplicationStatus(cameraName + ": " + message, true);
     }
 
     private void runOnFxThread(Runnable action) {
@@ -273,13 +288,14 @@ public final class DashboardView extends BorderPane implements StreamMonitorSurf
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
         Label product = new Label("CraftView desktop control centre");
-        HBox bar = new HBox(8, applicationStatusIndicator, applicationStatus, spacer, product);
+        HBox bar = new HBox(8, applicationStatusIndicator, applicationStatus, spacer, edgeConnectionStatus, product);
         bar.setAlignment(Pos.CENTER_LEFT);
         bar.getStyleClass().add("status-bar");
         return bar;
     }
 
     private void showPage(Page page) {
+        activePage = page;
         currentPage.setText(page.title);
         navigationButtons.values().forEach(button -> button.getStyleClass().remove("selected"));
         Button selected = navigationButtons.get(page);
@@ -289,7 +305,7 @@ public final class DashboardView extends BorderPane implements StreamMonitorSurf
             case LIVE_MONITOR -> liveMonitorPage();
             case EVENT_LOG -> eventLogPage();
             case INCIDENT_REVIEW -> incidentReviewPage();
-            case CAMERA_MANAGEMENT -> new CameraManagementPage(backgroundTasks, cameraService).root();
+            case CAMERA_MANAGEMENT -> new CameraManagementPage(backgroundTasks, edgeApiClient).root();
             case ZONE_MANAGEMENT -> zoneManagementPage();
             case AI_SETTINGS -> aiSettingsPage();
             case NOTIFICATION_SETTINGS -> notificationSettingsPage();
@@ -310,10 +326,10 @@ public final class DashboardView extends BorderPane implements StreamMonitorSurf
         );
 
         FlowPane severity = flow(
-                severityCard("LOW", Long.toString(severityCount(EventSeverity.LOW)), "low"),
-                severityCard("MEDIUM", Long.toString(severityCount(EventSeverity.MEDIUM)), "medium"),
-                severityCard("HIGH", Long.toString(severityCount(EventSeverity.HIGH)), "high"),
-                severityCard("CRITICAL", Long.toString(severityCount(EventSeverity.CRITICAL)), "critical")
+                severityCard("LOW", Long.toString(severityCount("LOW")), "low"),
+                severityCard("MEDIUM", Long.toString(severityCount("MEDIUM")), "medium"),
+                severityCard("HIGH", Long.toString(severityCount("HIGH")), "high"),
+                severityCard("CRITICAL", Long.toString(severityCount("CRITICAL")), "critical")
         );
 
         TableView<EventItem> recent = eventTable(events);
@@ -328,8 +344,8 @@ public final class DashboardView extends BorderPane implements StreamMonitorSurf
                 summary, section("Severity distribution", severity), section("Recent event feed", recent), operational);
     }
 
-    private long severityCount(EventSeverity severity) {
-        String label = displayName(severity.name());
+    private long severityCount(String severity) {
+        String label = displayName(severity);
         return events.stream().filter(event -> label.equals(event.severity)).count();
     }
 
@@ -461,6 +477,7 @@ public final class DashboardView extends BorderPane implements StreamMonitorSurf
                 detailCard("CONFIGURED CAMERAS", Integer.toString(cameras.size()), "Current runtime configuration"),
                 detailCard("CAMERA HEALTH", cameraHealthSummary(), "Current in-memory worker state"),
                 detailCard("DATABASE / STARTUP", applicationStatus.getText(), "Current bootstrap status"),
+                detailCard("EDGE API", edgeConnection, "Versioned loopback service boundary"),
                 detailCard("PROCESSING METRICS", "Not measured", "Instrumentation is scheduled for M5"),
                 detailCard("REDIS", "Not integrated", "Integration is scheduled for M1"),
                 detailCard("EVIDENCE STORAGE", "Not integrated", "Integration is scheduled for M3")
@@ -578,7 +595,11 @@ public final class DashboardView extends BorderPane implements StreamMonitorSurf
         Label status = new Label(health.toUpperCase());
         status.getStyleClass().addAll("status-chip", health.toLowerCase());
         cameraStatusLabels.put(camera.name, status);
-        String stateIcon = "Impaired".equals(health) ? "camera-impaired" : "camera-online";
+        String stateIcon = switch (health) {
+            case "Impaired", "Reconnecting", "Connecting" -> "camera-impaired";
+            case "Offline", "Frozen", "Stopped", "Disabled", "Unknown" -> "camera-offline";
+            default -> "camera-online";
+        };
         HBox state = new HBox(6, SvgIcon.load(stateIcon, 15), status);
         state.setAlignment(Pos.CENTER_LEFT);
         ImageView imageView = feedImageView();

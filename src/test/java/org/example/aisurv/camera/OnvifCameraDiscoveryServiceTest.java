@@ -36,6 +36,14 @@ class OnvifCameraDiscoveryServiceTest {
         assertNull(discovery.parseResponse(packet("<Envelope><Scopes>camera</Scopes></Envelope>", "10.0.0.2")));
     }
 
+    @Test
+    void rejectsCredentialBearingOrNonHttpServiceAddresses() throws Exception {
+        assertNull(discovery.parseResponse(packet(
+                "<Envelope><XAddrs>http://admin:secret@10.0.0.2/onvif</XAddrs></Envelope>", "10.0.0.2")));
+        assertNull(discovery.parseResponse(packet(
+                "<Envelope><XAddrs>file:///etc/passwd</XAddrs></Envelope>", "10.0.0.2")));
+    }
+
     private DatagramPacket packet(String body, String address) throws Exception {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         return new DatagramPacket(bytes, bytes.length, InetAddress.getByName(address), 3702);

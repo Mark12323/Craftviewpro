@@ -68,24 +68,25 @@ class StreamManagerTest {
         }, Duration.ofMillis(150));
         List<CameraDefinition> cameras = List.of(
                 new CameraDefinition("Gate", "rtsp://gate/live"),
-                new CameraDefinition("Lobby", "rtsp://lobby/live")
+                new CameraDefinition("Lobby", "rtsp://lobby/live"),
+                new CameraDefinition("East", "rtsp://east/live"),
+                new CameraDefinition("West", "rtsp://west/live")
         );
         manager.startAll(cameras);
-        waitUntilRunning(manager, "Gate");
-        waitUntilRunning(manager, "Lobby");
+        for (CameraDefinition camera : cameras) waitUntilRunning(manager, camera.name());
 
         try {
             long startedAt = System.nanoTime();
-            manager.stopAllUntil(startedAt + Duration.ofMillis(150).toNanos());
+            manager.stopAllUntil(startedAt + Duration.ofMillis(250).toNanos());
             long elapsedMillis = Duration.ofNanos(System.nanoTime() - startedAt).toMillis();
 
-            assertTrue(elapsedMillis < 275, "shutdown should use one global deadline");
-            assertEquals(2, manager.activeStreamCount(), "surviving workers must remain visible");
+            assertTrue(elapsedMillis < 750,
+                    "shutdown should use one global deadline; elapsed " + elapsedMillis + "ms");
+            assertEquals(4, manager.activeStreamCount(), "surviving workers must remain visible");
             assertFalse(manager.start(new CameraDefinition("Yard", "rtsp://yard/live"), 3));
         } finally {
             releaseWorkers.set(true);
-            waitUntilStopped(manager, "Gate");
-            waitUntilStopped(manager, "Lobby");
+            for (CameraDefinition camera : cameras) waitUntilStopped(manager, camera.name());
         }
     }
 

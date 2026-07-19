@@ -11,6 +11,7 @@ public record CameraSummary(
         String zone,
         CameraPriority priority,
         CameraStatus status,
-        boolean enabled
+        boolean enabled,
+        long version
 ) {
 }

@@ -1,0 +1,568 @@
+AISurv Implementation Milestones
+================================
+
+Document purpose
+----------------
+This document tracks implementation progress from the current prototype to a
+commercial and enterprise-ready AISurv platform. A milestone is complete only
+when all required work and exit criteria are satisfied and verified.
+
+Status values
+-------------
+[ ] Not started
+[-] In progress
+[x] Completed
+[!] Blocked
+
+Overall progress
+----------------
+[x] M0 - Trustworthy Prototype
+[x] M1 - Reliable Camera Management Platform
+[ ] M2 - Durable Event-Driven Surveillance Core
+[ ] M3 - Secure Incident and Evidence System
+[ ] M4 - Operational Notification Platform
+[ ] M5 - Advanced Intelligence and Real Observability
+[ ] M6 - Commercial Small-Institution Release
+[ ] M7 - Enterprise Hybrid and Selectively Distributed Release
+
+
+M0 - Trustworthy Prototype
+==========================
+
+Status: [x] Completed
+Depends on: Current prototype
+Implementation stages: Stage 0
+
+Objective
+---------
+Stabilize the existing application and establish a reliable development and
+testing baseline before adding new product capabilities.
+
+Required work
+-------------
+[x] Add JUnit 5, Mockito, and Testcontainers configuration.
+[x] Test environment camera parsing and fallback behavior.
+[x] Test ONVIF discovery response parsing.
+[x] Test event rules and severity preservation.
+[x] Test camera registration and persistence.
+[x] Move database startup work off the JavaFX Application Thread.
+[x] Close stream workers, grabbers, ONNX sessions, frames, and native resources.
+[x] Join background workers during graceful shutdown.
+[x] Separate camera-health events from surveillance events.
+[x] Preserve structured event type and severity through the UI boundary.
+[x] Remove dead UI implementations and unreachable code.
+[x] Replace fabricated UI metrics with real values or unavailable states.
+[x] Validate startup configuration and display actual service states.
+[x] Formalize Java 21 and JavaFX 21 as the supported runtime baseline.
+
+Exit criteria
+-------------
+[x] Application startup remains responsive when PostgreSQL is unavailable.
+[x] Automated core tests pass through Maven.
+[x] No known native-resource or worker-lifecycle leaks remain.
+[x] Event type and severity reach the UI unchanged.
+[x] Operational pages do not display fabricated data as real data.
+[x] Application shutdown terminates workers cleanly.
+
+Completion record
+-----------------
+Completed on: 2026-07-17
+Verified by: Automated Maven suite under JDK 21 and Docker Desktop
+Evidence/notes: 60 tests pass with AISURV_RUN_CONTAINER_TESTS=true and
+mvn clean test. The suite includes a PostgreSQL 16 Testcontainers migration and
+camera-repository test. Background bootstrap, discovery, registration, stream
+workers, and native cleanup now share an application-owned bounded shutdown
+lifecycle. Operational UI states no longer present session events as incidents
+or imply unavailable acknowledgement, evidence, and notification state.
+
+
+M1 - Reliable Camera Management Platform
+========================================
+
+Status: [x] Completed
+Depends on: M0
+Implementation stages: Stages 1 and 2
+
+Objective
+---------
+Separate the JavaFX client from a modular local edge backend, establish a
+versioned local API, and deliver a complete, reliable camera discovery,
+registration, configuration, and health lifecycle.
+
+Scope decision: M1 supports credential-free cameras. Authenticated camera storage
+and authenticated ONVIF device/media interrogation move to M3, where an OS-backed
+secret store is required. Dashboard/incident/event persistence remains owned by
+M2/M3, and full observability remains owned by M5. Real-vendor camera validation
+is an external release gate because no representative hardware is available.
+
+Required work - service and data foundation
+-------------------------------------------
+[x] Restructure the build into desktop, edge-core, edge-backend, and API-contract modules.
+[x] Introduce a separate Spring Boot edge runtime with an independent lifecycle.
+[x] Define versioned command/query APIs and SSE contracts for the desktop client.
+[x] Generate or share transport DTOs without exposing persistence entities.
+[x] Introduce application-service interfaces inside the edge backend.
+[x] Implement CameraApplicationService.
+[x] Assign durable EventApplicationService implementation to M2 with event persistence.
+[x] Assign DashboardService implementation to M2 with durable event aggregates.
+[x] Assign IncidentReviewService implementation to M2/M3 with incidents and evidence.
+[x] Keep M1 system health coarse and assign full observability to M5.
+[x] Introduce M1 camera, edge-health, runtime-health, and update DTOs/view models.
+[x] Remove direct Hibernate and repository access from JavaFX controllers.
+[x] Move database bootstrap, repositories, stream lifecycle, and AI ownership out
+    of the JavaFX process and into the edge backend.
+[x] Keep monitoring active when the desktop disconnects, closes, or restarts.
+[x] Bind the edge API to loopback; defer authenticated/TLS LAN operation to M3.
+[x] Add edge discovery/configuration, health checks, reconnect behavior, and clear
+    desktop states for an unavailable or incompatible edge API.
+[x] Add API contract and separate-process integration tests.
+[x] Use one edge-owned Hibernate SessionFactory and connection pool.
+[x] Add M1 Flyway migrations for camera lifecycle, runtime health, and configuration audits;
+    assign zones/events/incidents/settings schemas to M2 and security audit to M3.
+[x] Add camera repository transactions, required indexes, and optimistic locking;
+    defer pagination until M2 introduces historical query surfaces.
+[x] Defer Caffeine until a measured high-read configuration use case exists.
+[x] Keep PostgreSQL authoritative and defer optional Redis health projection until needed.
+[x] Keep typed worker events and assign the application-wide durable event bus to M2.
+
+Required work - camera lifecycle
+--------------------------------
+[x] List registered cameras from PostgreSQL in Camera Management.
+[x] Support camera registration, editing, enabling, disabling, and deletion.
+[x] Detect duplicate cameras and stream URLs.
+[x] Validate RTSP URI syntax and bounded protocol connectivity before approval.
+[x] Keep credential-free WS-Discovery in M1; assign authenticated ONVIF information/profile queries to M3.
+[x] Keep manual validated RTSP approval in M1; assign authenticated ONVIF URI resolution to M3.
+[x] Reject authenticated cameras in M1; assign secure credential entry/storage to M3.
+[x] Reject credential-bearing endpoints and omit credentials from UI views, errors, and logs.
+[x] Start newly enabled cameras without restarting the application.
+[x] Stop disabled or deleted cameras immediately.
+[x] Persist health state and last-seen timestamps.
+[x] Implement online, offline, impaired, recovered, and frozen-stream events.
+[x] Track camera uptime and controlled reconnect attempts.
+[x] Audit all camera configuration changes transactionally.
+
+Exit criteria
+-------------
+[x] The JavaFX client and edge backend run as separate JVM processes.
+[x] JavaFX UI code does not directly access Hibernate, repositories, Redis, RTSP,
+    ONNX Runtime, or evidence storage.
+[x] The desktop uses only the versioned edge API for operational commands, queries,
+    health, and live updates.
+[x] Closing or restarting the desktop does not interrupt camera monitoring.
+[x] API compatibility and separate-process failure behavior are covered by tests.
+[x] Credential-free cameras can be discovered, approved, validated, saved, edited, and removed.
+[x] Camera workers start and stop without an application restart.
+[x] Invalid and duplicate camera registrations are rejected clearly.
+[x] Camera status reflects actual stream-worker state.
+[x] Frozen and disconnected streams generate structured health events.
+[x] Credential-bearing endpoints are rejected and credentials do not appear in normal UI output or logs.
+[x] V3 health/audit durability is covered by PostgreSQL 16 Testcontainers;
+    Redis is not authoritative and is not required for recovery.
+
+Completion record
+-----------------
+Completed on: 2026-07-19
+Verified by: Full Maven verify under JDK 21 with PostgreSQL 16 Testcontainers
+Evidence/notes: M1 started on 2026-07-19. Verified slices provide a
+four-module reactor, versioned health and camera-query contracts, a loopback-only
+Spring Boot edge process, desktop compatibility/unavailable states, and edge-backed
+camera inventory, discovery, registration, edit, enable, disable, and delete
+commands. Registry mutations use optimistic versions and database uniqueness.
+Under JDK 21, 123 unit/controller
+test cases execute. With AISURV_RUN_CONTAINER_TESTS=true, the PostgreSQL 16
+Testcontainers migration/persistence test and packaged separate-process test pass.
+Discovery is single-flight
+and command failures use structured API errors. The edge now owns stream and AI
+workers and reconciles registry mutations dynamically. Reconciliation preserves
+active workers when registry reads fail, cleans up partial startup, and retries
+initial startup. API v1.3 publishes reset-first camera-update SSE through a
+bounded broadcaster. Edge-mode desktops refresh inventory after updates and
+reconnect with bounded backoff while snapshot requests pause during outages.
+The desktop has no edge-core dependency or local monitoring fallback. Runtime
+health, last-seen, uptime, reconnect attempts, frozen/offline/recovered transitions,
+and camera-configuration audits are persisted by V3. Credential-bearing cameras
+are rejected until M3. Flyway applies V1 through V3 on clean PostgreSQL 16,
+Hibernate validates the resulting schema, and health/audit persistence assertions pass.
+
+
+M2 - Durable Event-Driven Surveillance Core
+===========================================
+
+Status: [ ] Not started
+Depends on: M1
+Implementation stages: Stages 3 and 4
+
+Objective
+---------
+Separate capture from inference, support controlled multi-camera processing,
+and persist structured events, zones, rules, incidents, and acknowledgements.
+
+Required work - processing pipeline
+-----------------------------------
+[ ] Separate RTSP frame capture from AI inference.
+[ ] Implement real bounded asynchronous frame queues.
+[ ] Add worker pools, backpressure, and effective frame-drop policies.
+[ ] Use camera or FFmpeg presentation timestamps where available.
+[ ] Implement resizing and preprocessing.
+[ ] Replace frame-count skipping with time-based inference intervals.
+[ ] Add critical, high, normal, and low camera-priority scheduling.
+[ ] Reuse model sessions safely where practical.
+[ ] Make detector thresholds configurable.
+[ ] Measure FPS, inference latency, queue depth, and dropped frames.
+[ ] Degrade lower-priority processing first under resource pressure.
+[ ] Add repeatable multi-camera soak and overload tests.
+
+Required work - events and zones
+--------------------------------
+[ ] Persist events with camera, zone, type, severity, and confidence.
+[ ] Store model version, rule version, and timestamps with each event.
+[ ] Persist acknowledgement, escalation, evidence, and notification state.
+[ ] Add zones, camera groups, schedules, and restricted-zone policies.
+[ ] Move event rules and thresholds into configurable services and storage.
+[ ] Implement cooldowns and duplicate-event suppression.
+[ ] Group repeated related events.
+[ ] Persist events before evidence or notification processing.
+[ ] Connect Event Log to paginated database queries.
+[ ] Add event filters for time, camera, zone, type, and severity.
+[ ] Open the selected Event Log record in Incident Review.
+[ ] Implement transactional acknowledgement and escalation commands.
+[ ] Replace hardcoded dashboard counts with persisted aggregates.
+
+Exit criteria
+-------------
+[ ] Slow inference does not block RTSP capture.
+[ ] Queue limits and drop policies work under measured load.
+[ ] Critical cameras retain processing priority under pressure.
+[ ] Events and acknowledgements survive application restart.
+[ ] Duplicate activity does not produce uncontrolled event floods.
+[ ] Incident Review opens the operator-selected event.
+[ ] Dashboard totals agree with persisted event and camera data.
+
+Completion record
+-----------------
+Completed on:
+Verified by:
+Evidence/notes:
+
+
+M3 - Secure Incident and Evidence System
+========================================
+
+Status: [ ] Not started
+Depends on: M2
+Implementation stages: Stages 5 and 6
+
+Objective
+---------
+Protect operational capabilities with authentication and authorization, then
+implement controlled evidence capture, review, export, and retention.
+
+Required work - security and governance
+---------------------------------------
+[ ] Implement persistent users, roles, and permissions.
+[ ] Add login, session expiry, and desktop session locking.
+[ ] Define permissions for feeds, events, evidence, settings, and administration.
+[ ] Enforce permissions inside application services.
+[ ] Add persistent audit records for sensitive actions.
+[ ] Audit camera changes, acknowledgements, escalations, and settings changes.
+[ ] Audit evidence access, evidence export, and role changes.
+[ ] Externalize PostgreSQL, Redis, and MinIO credentials.
+[ ] Define password, failed-login, recovery, and administrator policies.
+[ ] Define production TLS and secret-storage requirements.
+[ ] Redact infrastructure and credential details from user-facing errors.
+
+Required work - evidence and incidents
+--------------------------------------
+[ ] Capture snapshots according to event evidence policy.
+[ ] Buffer pre-event and post-event frames for short clips.
+[ ] Add an interchangeable evidence-storage interface.
+[ ] Support local filesystem storage for compact deployments.
+[ ] Support MinIO/S3 storage for commercial deployments.
+[ ] Persist evidence metadata and event relationships.
+[ ] Generate and verify evidence-integrity hashes.
+[ ] Display snapshots and clips in Incident Review.
+[ ] Implement permission-controlled evidence access and export.
+[ ] Audit every sensitive evidence access and export.
+[ ] Implement retention policies and legal-hold state.
+[ ] Add archival and verified deletion jobs.
+
+Exit criteria
+-------------
+[ ] Unauthenticated users cannot access operational capabilities.
+[ ] Unauthorized commands fail at the service boundary.
+[ ] Sensitive actions create queryable audit entries.
+[ ] High-value events produce policy-approved evidence.
+[ ] Incident Review displays evidence linked to its event.
+[ ] Media is stored outside PostgreSQL.
+[ ] Evidence exports are permission-controlled and audited.
+[ ] Retention jobs safely archive or delete expired evidence.
+
+Completion record
+-----------------
+Completed on:
+Verified by:
+Evidence/notes:
+
+
+M4 - Operational Notification Platform
+======================================
+
+Status: [ ] Not started
+Depends on: M3
+Implementation stages: Stage 7
+
+Objective
+---------
+Deliver secure, role-aware event notifications and real live operational data
+without creating uncontrolled duplicate alerts or exposing sensitive content.
+
+Required work
+-------------
+[ ] Implement notification rules and subscriptions.
+[ ] Add role-based and zone-based routing.
+[ ] Add secure device enrollment and revocation.
+[ ] Generate QR pairing codes with ZXing.
+[ ] Store short-lived pairing tokens in Redis.
+[ ] Require authenticated approval after QR scanning.
+[ ] Persist delivery attempts, outcomes, and failures.
+[ ] Add retry and failure handling.
+[ ] Notify high and critical events by default.
+[ ] Escalate unacknowledged critical incidents according to policy.
+[ ] Apply notification cooldowns and duplicate suppression.
+[ ] Minimize sensitive information in notification payloads.
+[ ] Replace static Notification Settings data with service-backed records.
+[ ] Add live in-process dashboard updates for compact deployments.
+[ ] Define SSE contracts for separated backend deployments.
+
+Exit criteria
+-------------
+[ ] Devices can be securely enrolled and revoked.
+[ ] QR pairing tokens expire and cannot independently grant access.
+[ ] Delivery attempts and outcomes are persisted.
+[ ] Repeated events respect notification cooldown policies.
+[ ] Critical unacknowledged incidents escalate as configured.
+[ ] Notification payloads respect user role and zone permissions.
+[ ] Dashboard and notification pages display live service-backed data.
+
+Completion record
+-----------------
+Completed on:
+Verified by:
+Evidence/notes:
+
+
+M5 - Advanced Intelligence and Real Observability
+=================================================
+
+Status: [ ] Not started
+Depends on: M4
+Implementation stages: Stages 8 and 9
+
+Objective
+---------
+Add temporal behavior intelligence, model governance, measurable AI quality,
+real system health, and reports generated from operational records.
+
+Required work - advanced intelligence
+-------------------------------------
+[ ] Assign temporary human tracking IDs.
+[ ] Track movement paths across frames.
+[ ] Detect zone entry and exit.
+[ ] Classify stationary, walking, running, group, and unknown movement.
+[ ] Add multi-frame behavior confirmation.
+[ ] Implement loitering detection.
+[ ] Implement after-hours movement detection.
+[ ] Implement restricted-zone entry detection.
+[ ] Implement group-running detection.
+[ ] Validate and implement fall or accident detection.
+[ ] Validate and implement fight or commotion detection.
+[ ] Implement crowd activity analysis.
+[ ] Add model registry, versioning, activation, and rollback.
+[ ] Add per-camera and per-zone threshold calibration.
+[ ] Build false-positive measurement and review tooling.
+[ ] Keep face intelligence disabled pending explicit governance approval.
+
+Required work - observability and reports
+-----------------------------------------
+[ ] Add camera uptime and frame-rate metrics.
+[ ] Add inference latency, queue depth, and dropped-frame metrics.
+[ ] Add database, Redis, notification, and evidence-storage metrics.
+[ ] Add CPU, memory, and available GPU metrics.
+[ ] Connect System Health to real service health.
+[ ] Add structured logs and correlation identifiers.
+[ ] Replace all remaining hardcoded dashboard and health values.
+[ ] Add event, incident, camera uptime, and response-time reports.
+[ ] Add CSV and PDF report generation.
+[ ] Introduce Prometheus, Grafana, and centralized logs when appropriate.
+
+Exit criteria
+-------------
+[ ] Behavior events use temporal and zone context rather than single frames.
+[ ] Every AI event records its model and rule versions.
+[ ] False-positive rates can be measured by behavior and deployment.
+[ ] Model and threshold changes are versioned and audited.
+[ ] No System Health metric is hardcoded.
+[ ] Operators can distinguish healthy, degraded, and unavailable services.
+[ ] Reports are generated from persisted operational records.
+
+Completion record
+-----------------
+Completed on:
+Verified by:
+Evidence/notes:
+
+
+M6 - Commercial Small-Institution Release
+=========================================
+
+Status: [ ] Not started
+Depends on: M5
+Implementation stages: Stage 10
+
+Objective
+---------
+Produce an installable, secure, tested, documented, and supportable release for
+small institutions operating approximately five to ten cameras.
+
+Required work
+-------------
+[ ] Package the desktop application and edge backend with jpackage.
+[ ] Install the edge backend as a managed local service with an independent
+    lifecycle from the desktop.
+[ ] Produce a signed Windows MSI or EXE with a bundled Java runtime.
+[ ] Define production configuration profiles and upgrade-safe data locations.
+[ ] Implement PostgreSQL backup and restore.
+[ ] Implement evidence and application-configuration backup and restore.
+[ ] Add Testcontainers integration tests.
+[ ] Add repeatable RTSP and ONVIF test simulators.
+[ ] Add sustained camera-load and failure-recovery tests.
+[ ] Add dependency, container, and source security scanning.
+[ ] Generate a software bill of materials for releases.
+[ ] Add continuous integration and release checks.
+[ ] Document installation, upgrades, operation, recovery, and troubleshooting.
+[ ] Define camera count, FPS, latency, event delivery, RPO, and RTO targets.
+[ ] Complete privacy, retention, and deployment configuration guidance.
+
+Exit criteria
+-------------
+[ ] AISurv installs, upgrades, runs, and uninstalls on a clean Windows machine.
+[ ] Desktop upgrades and restarts do not interrupt the managed edge service.
+[ ] A bundled Java runtime is used consistently.
+[ ] Backup and restore are verified through repeatable recovery exercises.
+[ ] Defined five-to-ten-camera load targets pass reliably.
+[ ] Security and dependency scans pass release policy.
+[ ] Automated release checks run in CI.
+[ ] Deployment can be completed from documentation without developer assistance.
+
+Completion record
+-----------------
+Completed on:
+Verified by:
+Release/version:
+Evidence/notes:
+
+
+M7 - Enterprise Hybrid and Selectively Distributed Release
+==========================================================
+
+Status: [ ] Not started
+Depends on: M6 and demonstrated commercial scaling requirements
+Implementation stages: Stage 11
+
+Objective
+---------
+Deploy the optional multi-tenant cloud control plane and extract only the edge
+responsibilities that demonstrate independent scaling, failure-isolation,
+hardware-placement, release-cadence, or team-ownership needs for commercial
+deployments of approximately 50 to 100+ cameras per site.
+
+Required work
+-------------
+[ ] Record load, failure-isolation, hardware, and ownership evidence before each
+    service extraction.
+[ ] Extract capture or AI workers behind stable contracts only where measured
+    camera or GPU requirements justify separate deployment.
+[ ] Extract evidence, notification, or analytics responsibilities only where
+    independent scaling or isolation is demonstrated.
+[ ] Keep full video frames local to an edge host or explicitly designed local
+    transport; do not route raw frame traffic through the cloud control plane.
+[ ] Deploy authenticated cloud APIs for tenants, sites, enrollment, licensing,
+    fleet health, remote summaries, notifications, and policy distribution.
+[ ] Implement a durable edge outbox, idempotent cloud ingestion, retry, replay,
+    ordering, and reconciliation semantics.
+[ ] Enforce tenant and site isolation, regional data residency, retention, and
+    auditable authorization for every cloud record and command.
+[ ] Scale versioned command APIs and SSE subscriptions for supported local and
+    remote operational clients.
+[ ] Introduce Redis Streams, RabbitMQ, or another broker only if required.
+[ ] Define message delivery, ordering, retry, and dead-letter semantics.
+[ ] Add independent worker scaling and GPU worker pools.
+[ ] Preserve site-local operational PostgreSQL and evidence authority while
+    provisioning separate cloud PostgreSQL and approved object storage.
+[ ] Centralize fleet-level logs, metrics, and health without making local
+    surveillance dependent on cloud availability.
+[ ] Package services with containers and Helm charts.
+[ ] Add Kubernetes readiness and liveness probes.
+[ ] Add horizontal autoscaling.
+[ ] Add certificate and secret management.
+[ ] Add centralized monitoring, alerting, logs, and traces.
+[ ] Implement enterprise backup and disaster recovery.
+[ ] Test service failure, network partition, retry, and recovery behavior.
+
+Exit criteria
+-------------
+[ ] The cloud control plane can be unavailable without stopping local camera
+    monitoring, detection, incident handling, or evidence preservation.
+[ ] Every extracted service has documented evidence for its independent boundary.
+[ ] Selected processing workers scale independently by measured demand.
+[ ] Desktop and edge binaries contain no cloud database or service-role secrets.
+[ ] Tenant isolation and edge-cloud synchronization recovery are verified.
+[ ] Message delivery and failure-recovery semantics are verified.
+[ ] GPU and CPU worker pools can be scheduled independently.
+[ ] Kubernetes deployments use managed secrets and TLS.
+[ ] Central health, logs, metrics, and traces cover all services.
+[ ] Enterprise availability, recovery, and camera-capacity targets are met.
+
+Completion record
+-----------------
+Completed on:
+Verified by:
+Release/version:
+Evidence/notes:
+
+
+Progress update procedure
+=========================
+
+1. Change a work item from [ ] to [-] when implementation starts.
+2. Change it to [x] only after implementation and verification are complete.
+3. Mark blocked work as [!] and describe the blocker in Evidence/notes.
+4. Run the milestone's required tests before marking exit criteria complete.
+5. Record completion date, verifier, release, and supporting evidence.
+6. Mark the milestone complete in Overall progress only when every exit
+   criterion is [x].
+7. Do not begin dependency-sensitive work from a later milestone unless its
+   prerequisite interfaces and data contracts have been completed.
+
+Decision log
+============
+
+Date       Milestone  Decision                                  Owner
+---------- ---------- ----------------------------------------- ----------------
+2026-07-14 M0         Open UI before background DB bootstrap    AISurv team
+2026-07-14 M0         Keep DB authoritative when connected      AISurv team
+2026-07-14 M0         Label unavailable features instead of     AISurv team
+                      displaying sample operational data
+
+
+Blocker log
+===========
+
+Date       Milestone  Blocker                                   Owner/Resolution
+---------- ---------- ----------------------------------------- ----------------
+2026-07-14 M0         Docker Desktop Linux engine was unavailable Resolved 2026-07-17:
+                      and container test could not execute        Testcontainers 1.21.4
+                                                                 supports Docker 29;
+                                                                 PostgreSQL test passes
+                                                                container test

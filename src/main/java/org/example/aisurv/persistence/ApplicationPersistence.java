@@ -1,6 +1,7 @@
 package org.example.aisurv.persistence;
 
 import org.example.aisurv.persistence.repositories.CameraRepository;
+import org.example.aisurv.persistence.repositories.CameraHealthRepository;
 
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -13,6 +14,7 @@ public final class ApplicationPersistence implements CameraRepositoryProvider, A
     private final Supplier<HibernateSessionFactory> factorySupplier;
     private HibernateSessionFactory hibernate;
     private CameraRepository cameraRepository;
+    private CameraHealthRepository cameraHealthRepository;
     private CompletableFuture<CameraRepository> initialization;
     private boolean closed;
 
@@ -63,6 +65,7 @@ public final class ApplicationPersistence implements CameraRepositoryProvider, A
                 }
                 hibernate = candidate;
                 cameraRepository = repository;
+                cameraHealthRepository = new CameraHealthRepository(candidate.sessionFactory());
                 initialization = null;
                 pending.complete(repository);
             }
@@ -76,6 +79,14 @@ public final class ApplicationPersistence implements CameraRepositoryProvider, A
                 }
             }
             pending.completeExceptionally(failure);
+        }
+    }
+
+    public CameraHealthRepository cameraHealthRepository() {
+        cameraRepository();
+        synchronized (lock) {
+            ensureOpen();
+            return cameraHealthRepository;
         }
     }
 
@@ -114,6 +125,7 @@ public final class ApplicationPersistence implements CameraRepositoryProvider, A
             toClose = hibernate;
             hibernate = null;
             cameraRepository = null;
+            cameraHealthRepository = null;
         }
         if (toClose != null) {
             toClose.close();

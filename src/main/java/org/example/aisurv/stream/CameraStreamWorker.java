@@ -115,7 +115,7 @@ public class CameraStreamWorker implements Runnable {
                     processStream(grabber, matConverter, java2DConverter);
                 } catch (Exception e) {
                     if (!shouldStop()) {
-                        publishHealth(CameraHealthState.IMPAIRED, "Connection failed: " + safeMessage(e));
+                        publishHealth(CameraHealthState.OFFLINE, "Connection failed");
                         LOGGER.warn("{} stream connection failed: {}", cameraName, safeMessage(e));
                     }
                 } finally {
@@ -169,10 +169,16 @@ public class CameraStreamWorker implements Runnable {
 
     private void processStream(FFmpegFrameGrabber grabber, OpenCVFrameConverter.ToMat matConverter,
                                Java2DFrameConverter java2DConverter) throws Exception {
+        FrozenStreamDetector frozenStream = new FrozenStreamDetector(java.time.Duration.ofSeconds(30), System::nanoTime);
         while (!shouldStop()) {
             try (Frame frame = grabber.grabImage()) {
                 if (frame == null) {
-                    publishHealth(CameraHealthState.RECONNECTING, "Stream dropped");
+                    publishHealth(CameraHealthState.OFFLINE, "Stream unavailable");
+                    return;
+                }
+                monitor.onFrameObserved(cameraName, Instant.now());
+                if (frozenStream.observe(frame.timestamp)) {
+                    publishHealth(CameraHealthState.FROZEN, "Stream frozen");
                     return;
                 }
                 if (!frameRateController.shouldProcessCurrentFrame()) {

@@ -8,6 +8,7 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketTimeoutException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -32,7 +33,6 @@ public class OnvifCameraDiscoveryService implements CameraDiscoveryService {
         byte[] probe = discoveryProbe().getBytes(StandardCharsets.UTF_8);
 
         try (DatagramSocket socket = new DatagramSocket()) {
-            socket.setSoTimeout(Math.toIntExact(timeout.toMillis()));
             DatagramPacket packet = new DatagramPacket(
                     probe,
                     probe.length,
@@ -43,6 +43,9 @@ public class OnvifCameraDiscoveryService implements CameraDiscoveryService {
 
             Instant deadline = Instant.now().plus(timeout);
             while (Instant.now().isBefore(deadline)) {
+                long remainingMillis = Duration.between(Instant.now(), deadline).toMillis();
+                if (remainingMillis <= 0) break;
+                socket.setSoTimeout(Math.toIntExact(Math.min(Integer.MAX_VALUE, Math.max(1, remainingMillis))));
                 byte[] buffer = new byte[8192];
                 DatagramPacket response = new DatagramPacket(buffer, buffer.length);
                 try {
@@ -57,6 +60,7 @@ public class OnvifCameraDiscoveryService implements CameraDiscoveryService {
             }
         } catch (IOException | ArithmeticException e) {
             LOGGER.warn("ONVIF discovery failed: {}", e.getMessage());
+            throw new IllegalStateException("ONVIF discovery could not access the local network", e);
         }
 
         return new ArrayList<>(discovered.values());
@@ -70,6 +74,15 @@ public class OnvifCameraDiscoveryService implements CameraDiscoveryService {
         }
 
         String serviceUrl = xaddr.trim().split("\\s+")[0];
+        URI serviceEndpoint;
+        try {
+            serviceEndpoint = URI.create(serviceUrl);
+        } catch (IllegalArgumentException failure) {
+            return null;
+        }
+        if (serviceEndpoint.getUserInfo() != null || serviceEndpoint.getHost() == null
+                || !("http".equalsIgnoreCase(serviceEndpoint.getScheme())
+                || "https".equalsIgnoreCase(serviceEndpoint.getScheme()))) return null;
         String scopes = firstMatch(SCOPES_PATTERN, body);
         String manufacturer = scopeValue(scopes, "hardware");
         String model = scopeValue(scopes, "name");

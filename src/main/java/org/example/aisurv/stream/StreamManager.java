@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 
 public class StreamManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(StreamManager.class);
@@ -19,7 +20,7 @@ public class StreamManager {
     private final StreamMonitorSurface monitor;
     private final WorkerFactory workerFactory;
     private final Duration joinTimeout;
-    private final Map<String, WorkerHandle> workers = new LinkedHashMap<>();
+    private final Map<UUID, WorkerHandle> workers = new LinkedHashMap<>();
     private Lifecycle lifecycle = Lifecycle.RUNNING;
 
     public StreamManager(StreamMonitorSurface monitor) {
@@ -48,19 +49,19 @@ public class StreamManager {
             LOGGER.warn("{} stream worker cannot start while manager is {}", camera.name(), lifecycle);
             return false;
         }
-        WorkerHandle existing = workers.get(camera.name());
+        WorkerHandle existing = workers.get(camera.id());
         if (existing != null && existing.thread().isAlive()) {
             LOGGER.warn("{} stream worker is already running", camera.name());
             return false;
         }
         if (existing != null) {
-            workers.remove(camera.name());
+            workers.remove(camera.id());
         }
 
         CameraStreamWorker worker = workerFactory.create(camera.name(), camera.rtspUrl(), monitor);
         Thread thread = new Thread(worker, "camera-stream-" + index);
         thread.setDaemon(true);
-        workers.put(camera.name(), new WorkerHandle(worker, thread));
+        workers.put(camera.id(), new WorkerHandle(camera.name(), worker, thread));
         thread.start();
         LOGGER.info("{} stream worker started", camera.name());
         return true;
@@ -71,7 +72,7 @@ public class StreamManager {
     }
 
     public void stopAllUntil(long deadlineNanos) {
-        List<Map.Entry<String, WorkerHandle>> snapshot;
+        List<Map.Entry<UUID, WorkerHandle>> snapshot;
         synchronized (this) {
             if (lifecycle != Lifecycle.RUNNING) {
                 return;
@@ -80,13 +81,13 @@ public class StreamManager {
             snapshot = new ArrayList<>(workers.entrySet());
         }
 
-        for (Map.Entry<String, WorkerHandle> entry : snapshot) {
+        for (Map.Entry<UUID, WorkerHandle> entry : snapshot) {
             entry.getValue().worker().requestStop();
             entry.getValue().thread().interrupt();
         }
 
         boolean interrupted = false;
-        for (Map.Entry<String, WorkerHandle> entry : snapshot) {
+        for (Map.Entry<UUID, WorkerHandle> entry : snapshot) {
             Thread thread = entry.getValue().thread();
             long remainingNanos = deadlineNanos - System.nanoTime();
             if (remainingNanos <= 0) {
@@ -106,9 +107,9 @@ public class StreamManager {
             workers.entrySet().removeIf(entry -> !entry.getValue().thread().isAlive());
             lifecycle = Lifecycle.STOPPED;
         }
-        for (Map.Entry<String, WorkerHandle> entry : snapshot) {
+        for (Map.Entry<UUID, WorkerHandle> entry : snapshot) {
             if (entry.getValue().thread().isAlive()) {
-                LOGGER.warn("{} stream worker remains active after the shutdown deadline", entry.getKey());
+                LOGGER.warn("{} stream worker remains active after the shutdown deadline", entry.getValue().name());
             }
         }
         if (interrupted) {
@@ -121,8 +122,32 @@ public class StreamManager {
     }
 
     public synchronized boolean isRunning(String cameraName) {
-        WorkerHandle handle = workers.get(cameraName);
-        return handle != null && handle.thread().isAlive();
+        return workers.values().stream()
+                .anyMatch(handle -> handle.name().equals(cameraName) && handle.thread().isAlive());
+    }
+
+    public boolean stop(UUID cameraId) {
+        WorkerHandle handle;
+        synchronized (this) {
+            handle = workers.get(cameraId);
+        }
+        if (handle == null) return true;
+        handle.worker().requestStop();
+        handle.thread().interrupt();
+        try {
+            handle.thread().join(joinTimeout.toMillis());
+        } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+        if (handle.thread().isAlive()) {
+            LOGGER.warn("{} stream worker remains active after the shutdown deadline", handle.name());
+            return false;
+        }
+        synchronized (this) {
+            workers.remove(cameraId, handle);
+        }
+        return true;
     }
 
     @FunctionalInterface
@@ -130,7 +155,7 @@ public class StreamManager {
         CameraStreamWorker create(String cameraName, String rtspUrl, StreamMonitorSurface monitor);
     }
 
-    private record WorkerHandle(CameraStreamWorker worker, Thread thread) {
+    private record WorkerHandle(String name, CameraStreamWorker worker, Thread thread) {
     }
 
     private enum Lifecycle {

@@ -49,4 +49,13 @@ class CameraDefinitionTest {
         assertEquals(new CameraDefinition("Entrance", "rtsp://camera/live"), rtsp);
         assertEquals("rtsps://camera.example/live", rtsps.rtspUrl());
     }
+
+    @Test
+    void rejectsEmbeddedCredentials() {
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> new CameraDefinition("Entrance", "rtsp://admin:secret@camera/live"));
+
+        assertEquals("Camera RTSP URL must not contain credentials; use a credential reference",
+                error.getMessage());
+    }
 }

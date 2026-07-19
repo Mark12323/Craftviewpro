@@ -4,9 +4,13 @@ import org.example.aisurv.event.CameraHealthEvent;
 import org.example.aisurv.event.SurveillanceEvent;
 
 import java.awt.image.BufferedImage;
+import java.time.Instant;
 
 public interface StreamMonitorSurface {
     void updateFrame(String cameraName, BufferedImage image);
+
+    default void onFrameObserved(String cameraName, Instant observedAt) {
+    }
 
     default void onSurveillanceEvent(SurveillanceEvent event) {
         logEvent(event.cameraName(), event.message());

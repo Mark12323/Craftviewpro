@@ -5,5 +5,8 @@ public enum CameraHealthState {
     ONLINE,
     RECONNECTING,
     IMPAIRED,
+    OFFLINE,
+    FROZEN,
+    DISABLED,
     STOPPED
 }
